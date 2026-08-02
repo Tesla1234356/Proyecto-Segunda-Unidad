@@ -1,0 +1,10 @@
+# Librerías esenciales para Sentinel AI
+opencv-python==4.8.1.78
+opencv-contrib-python==4.8.1.78
+ultralytics==8.0.200    # Para YOLOv8
+deepface==0.0.79        # Para Reconocimiento Facial (FaceNet)
+tf-keras==2.15.0        # Dependencia interna para deepface/tensorflow
+filterpy==1.4.5         # Necesario para algoritmos de Tracking (DeepSORT)
+lapx==0.5.5             # Para asginaciones matemáticas en Tracking
+numpy==1.26.4
+pandas==2.1.4
