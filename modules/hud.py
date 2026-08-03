@@ -54,7 +54,8 @@ def crear_hud_base():
     
     return hud
 
-def actualizar_hud(hud, frame_principal, radar, fps, objetos_count, alertas, hacker_log):
+def actualizar_hud(hud, frame_principal, radar, fps, objetos_count, alertas, hacker_log,
+                    accion="ESPERANDO...", color_accion=(200, 200, 200), detalle_accion=""):
     """Pega el video manteniendo sus proporciones originales y dibuja textos dinámicos."""
     # 1. Pegar CÁMARA PRINCIPAL sin estirar ni deformar
     h_f, w_f = frame_principal.shape[:2]
@@ -62,6 +63,16 @@ def actualizar_hud(hud, frame_principal, radar, fps, objetos_count, alertas, hac
     x_offset = 40 + (800 - w_f) // 2
     y_offset = 60 + (600 - h_f) // 2
     hud[y_offset:y_offset+h_f, x_offset:x_offset+w_f] = frame_principal
+    
+    # 1.5 BANNER DE DECISIÓN AUTÓNOMA (sobre el video, estilo HUD de robot real)
+    banner_y1, banner_y2 = 623, 658
+    overlay = hud.copy()
+    cv2.rectangle(overlay, (45, banner_y1), (835, banner_y2), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.55, hud, 0.45, 0, hud)
+    cv2.rectangle(hud, (45, banner_y1), (835, banner_y2), color_accion, 2)
+    cv2.putText(hud, f">> {accion}", (55, banner_y2 - 9), cv2.FONT_HERSHEY_DUPLEX, 0.65, color_accion, 2)
+    if detalle_accion:
+        cv2.putText(hud, detalle_accion, (430, banner_y2 - 9), cv2.FONT_HERSHEY_COMPLEX_SMALL, 0.5, (190, 190, 190), 1)
     
     # 2. Pegar RADAR (El radar es cuadrado y lo redimensionamos estricto a 350x350)
     r_resized = cv2.resize(radar, (350, 350))

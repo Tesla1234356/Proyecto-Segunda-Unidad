@@ -36,6 +36,17 @@ class OdometriaORB:
         
         self.distancia_metros = 0.0
         self.puntos_objetos = [] # Guardará las anomalias encontradas
+
+        # --- TELEMETRÍA DE FLUJO ÓPTICO (navegación SIN YOLO) ---
+        # Se calcula a partir de los mismos puntos ORB ya rastreados.
+        # flujo_izq/centro/der : velocidad media de los puntos en cada zona (px/frame)
+        # divergencia          : expansión radial media (indica acercamiento frontal)
+        # flujo_global         : magnitud media global (sirve para saber si nos movemos)
+        # muestras             : cuántos puntos válidos respaldan la medición
+        self.telemetria_flujo = {
+            "izquierda": 0.0, "centro": 0.0, "derecha": 0.0,
+            "divergencia": 0.0, "flujo_global": 0.0, "muestras": 0
+        }
         
     def registrar_objeto_en_radar(self, nombre_objeto, offset_x=0):
         """Proyecta el objeto alrededor del robot en píxeles para que siempre se vea en el radar"""
@@ -61,9 +72,94 @@ class OdometriaORB:
         # Si es nuevo, agregarlo
         self.puntos_objetos.append({"pos": (obj_x, obj_y), "nombre": nombre_objeto, "tiempo": time.time()})
 
+    def _analizar_flujo_optico(self, pts1, pts2, frame_shape):
+        """
+        Calcula la telemetría de navegación a partir del movimiento de los puntos ORB.
+
+        Fundamento físico (paralaje de movimiento): al desplazarse la cámara, los
+        puntos que pertenecen a superficies CERCANAS se desplazan más rápido en la
+        imagen que los de superficies lejanas. Esto permite detectar obstáculos
+        SIN necesidad de reconocer qué son (funciona con paredes, columnas, cajas...).
+
+        Calcula dos indicadores:
+        1) Flujo por zona (izq/centro/der): dónde está lo más cercano.
+        2) Divergencia radial: si los puntos se EXPANDEN desde el centro de la imagen,
+           significa que nos acercamos frontalmente a una superficie (efecto 'looming').
+        """
+        h, w = frame_shape[:2]
+        cx, cy = w / 2.0, h / 2.0
+
+        desplaz = pts2 - pts1
+        magnitudes = np.linalg.norm(desplaz, axis=1)
+
+        # Filtrar emparejamientos absurdos (errores de matching): descartamos saltos
+        # mayores al 25% del ancho de la imagen, imposibles entre dos frames seguidos.
+        limite = w * 0.25
+        validos = magnitudes < limite
+        if np.count_nonzero(validos) < 6:
+            self._resetear_flujo()
+            return
+
+        pts2_v = pts2[validos]
+        desplaz_v = desplaz[validos]
+        magnitudes_v = magnitudes[validos]
+
+        # --- 1. FLUJO POR ZONA (mediana: resistente a puntos ruidosos) ---
+        x = pts2_v[:, 0]
+        mask_izq = x < w * 0.33
+        mask_der = x > w * 0.66
+        mask_cen = ~(mask_izq | mask_der)
+
+        def _mediana(mask):
+            return float(np.median(magnitudes_v[mask])) if np.count_nonzero(mask) >= 3 else 0.0
+
+        flujo_izq = _mediana(mask_izq)
+        flujo_cen = _mediana(mask_cen)
+        flujo_der = _mediana(mask_der)
+
+        # --- 2. DIVERGENCIA RADIAL (detección de acercamiento frontal) ---
+        # Para cada punto: ¿se está alejando del centro de la imagen? Si en promedio
+        # sí, la escena se está "expandiendo" => nos acercamos a algo de frente.
+        radial = pts2_v - np.array([cx, cy], dtype=np.float32)
+        radios = np.linalg.norm(radial, axis=1)
+        utiles = radios > 20.0  # puntos muy al centro no aportan info radial fiable
+
+        if np.count_nonzero(utiles) >= 5:
+            dir_radial = radial[utiles] / radios[utiles][:, None]
+            # Componente del desplazamiento en dirección radial, normalizada por el radio:
+            # esto aproxima la tasa de expansión (inverso del tiempo-al-contacto).
+            expansion = np.sum(desplaz_v[utiles] * dir_radial, axis=1) / radios[utiles]
+            divergencia = float(np.median(expansion))
+        else:
+            divergencia = 0.0
+
+        self.telemetria_flujo = {
+            "izquierda": flujo_izq,
+            "centro": flujo_cen,
+            "derecha": flujo_der,
+            "divergencia": divergencia,
+            "flujo_global": float(np.median(magnitudes_v)),
+            "muestras": int(np.count_nonzero(validos)),
+        }
+
+    def _resetear_flujo(self):
+        """Deja la telemetría en cero cuando no hay datos fiables (evita decidir con basura)."""
+        self.telemetria_flujo = {
+            "izquierda": 0.0, "centro": 0.0, "derecha": 0.0,
+            "divergencia": 0.0, "flujo_global": 0.0, "muestras": 0
+        }
+
+    def obtener_telemetria_flujo(self):
+        """Expone la telemetría de flujo óptico al motor de decisión (navegación sin YOLO)."""
+        return self.telemetria_flujo
+
     def procesar_frame(self, frame):
         draw_frame = frame.copy()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # La telemetría se limpia cada frame; solo se rellena si hay datos fiables.
+        # Así el motor de decisión nunca navega con información vieja.
+        self._resetear_flujo()
         
         kp, desc = self.orb.detectAndCompute(gray, None)
         
@@ -74,6 +170,11 @@ class OdometriaORB:
             if len(matches) > 10:
                 pts1 = np.float32([self.prev_kp[m.queryIdx].pt for m in matches])
                 pts2 = np.float32([kp[m.trainIdx].pt for m in matches])
+
+                # --- ANÁLISIS DE FLUJO ÓPTICO (base de la navegación autónoma) ---
+                # Se calcula ANTES de la matriz esencial, para que siga funcionando
+                # aunque el cálculo de pose 3D falle. No depende de YOLO en absoluto.
+                self._analizar_flujo_optico(pts1, pts2, frame.shape)
                 
                 E, mask = cv2.findEssentialMat(pts2, pts1, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
                 
