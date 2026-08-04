@@ -9,7 +9,7 @@
 [![DeepFace](https://img.shields.io/badge/DeepFace-FaceNet-00BCD4?style=for-the-badge)](https://github.com/serengil/deepface)
 [![License](https://img.shields.io/badge/Licencia-Académica-green?style=for-the-badge)](LICENSE)
 
-> **Proyecto Final - Segunda Unidad | Curso de Robótica 2026**  
+> **Proyecto Final - Segunda Unidad | Curso de Visión Artificial**  
 > Propuesta B: Robot Móvil Autónomo de Seguridad/Servicio
 
 ---
@@ -235,6 +235,6 @@ En la carpeta `tests/` se encuentran scripts independientes para validar cada et
 
 <div align="center">
 
-**Desarrollado para la presentación final de Robótica — 2026** 🎓
+**Desarrollado para la presentación final del Curso de Visión Artificial** 🎓
 
 </div>
